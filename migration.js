@@ -1,10 +1,11 @@
 require("dotenv").config();
 const fs = require("fs");
 const neatCsv = require("neat-csv");
+const createCsvWriter = require("csv-writer").createObjectCsvWriter;
+
 const { getProductDetails } = require("./helpers/Shopify/product");
 const { getCustomerByEmail } = require("./helpers/Recharge/customer");
-
-const createCsvWriter = require("csv-writer").createObjectCsvWriter;
+const { findCustomerByEmail } = require("./helpers/Stripe/customer");
 
 const createCSV = (csvFile, fileName) => {
   const csvWriter = createCsvWriter({
@@ -66,7 +67,14 @@ const createCSV = (csvFile, fileName) => {
     .then(() => console.log("The CSV file was written successfully", fileName));
 };
 
-const matchUpRechargeAndBold = (row, productId, variantId, qty, price) => {
+const matchUpRechargeAndBold = (
+  row,
+  productId,
+  variantId,
+  qty,
+  price,
+  customerStripeId
+) => {
   return {
     // Products
     external_product_id: productId,
@@ -86,7 +94,7 @@ const matchUpRechargeAndBold = (row, productId, variantId, qty, price) => {
     last_charge_date: row[""], // (only for prepaid subscriptions)
     next_charge_date: row["Next Order Date"],
     // Customer Info
-    customer_stripe_id: row[""],
+    customer_stripe_id: customerStripeId,
     customer_created_at: row[""],
     // Shipping
     shipping_email: row["Customer E-mail"],
@@ -113,18 +121,24 @@ const matchUpRechargeAndBold = (row, productId, variantId, qty, price) => {
   };
 };
 
-const processRowDate = async (rowData, isCheckRechargeCustomer) => {
+const processRowDate = async (
+  rowData,
+  paymentProcessor,
+  isCheckRechargeCustomer
+) => {
   const productTitles = rowData["Products"].split(",");
   const productIds = rowData["Product ID"].split(",");
   const variantIds = rowData["Variant ID"].split(",");
   const customerEmail = rowData["Customer E-mail"];
+  const billingFirstName = rowData["Billing First Name"];
 
   const active = rowData["Active"];
   const isPaused = rowData["Is Paused"];
+  let customerStripeId;
 
   const result = [];
 
-  if(active === "No" || isPaused === "1") {
+  if (active === "No" || isPaused === "1") {
     return result;
   }
 
@@ -171,6 +185,17 @@ const processRowDate = async (rowData, isCheckRechargeCustomer) => {
     }
   }
 
+  if (paymentProcessor === "STRIPE") {
+    const stripeResult = await findCustomerByEmail(customerEmail);
+    const { data: stripeData } = stripeResult;
+    const stripeCustomerName = stripeData[0].sources.data[0].name;
+    if (!stripeCustomerName.includes(billingFirstName)) {
+      throw "Name Does Not Match!!!!!!!!";
+    }
+    // stripeResult.data[0].sources.data[0].name
+    customerStripeId = stripeData[0].id;
+  }
+
   for (let index = 0; index < productIds.length; index++) {
     const product_id = productIds[index].trim();
     const variant_id = variantIds[index].trim();
@@ -198,7 +223,9 @@ const processRowDate = async (rowData, isCheckRechargeCustomer) => {
         console.log("No title");
       }
 
-      const [title, splitter, priceAndQty] = productTitle.split(/(\s-\s)(?!.*\1)/);
+      const [title, splitter, priceAndQty] = productTitle.split(
+        /(\s-\s)(?!.*\1)/
+      );
 
       // Figure out which one is the correct title to get the quantity.
       const [price, qty] = priceAndQty.split(" x ");
@@ -215,7 +242,8 @@ const processRowDate = async (rowData, isCheckRechargeCustomer) => {
         product_id.trim(),
         variant_id.trim(),
         qty,
-        price
+        price,
+        customerStripeId
       );
       result.push(cleanedRow);
     } catch (error) {
@@ -232,6 +260,7 @@ const processRowDate = async (rowData, isCheckRechargeCustomer) => {
 
 const boldFile = "recurring_orders_all_customer_export_2021-03-29.csv";
 const isCheckRechargeCustomer = false;
+const paymentProcessor = "Stripe";
 
 fs.readFile(`./bold-export/${boldFile}`, async (err, data) => {
   if (err) {
@@ -246,7 +275,11 @@ fs.readFile(`./bold-export/${boldFile}`, async (err, data) => {
 
   for (x; x < csvArr.length; x++) {
     const row = csvArr[x];
-    const results = await processRowDate(row, isCheckRechargeCustomer);
+    const results = await processRowDate(
+      row,
+      paymentProcessor.toLocaleUpperCase(),
+      isCheckRechargeCustomer
+    );
     for (let i = 0; i < results.length; i++) {
       largeArray.push(results[i]);
     }
