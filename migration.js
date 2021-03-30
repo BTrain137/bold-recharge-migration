@@ -1,3 +1,4 @@
+require("dotenv").config();
 const fs = require("fs");
 const neatCsv = require("neat-csv");
 const { getProductDetails } = require("./helpers/Shopify/product");
@@ -82,7 +83,7 @@ const matchUpRechargeAndBold = (row, productId, variantId, qty, price) => {
     shipping_interval_frequency: row["Interval Number"],
     // Dates
     charge_on_day_of_month: row[""],
-    last_charge_date: row[""], // Must be blank
+    last_charge_date: row[""], // (only for prepaid subscriptions)
     next_charge_date: row["Next Order Date"],
     // Customer Info
     customer_stripe_id: row[""],
@@ -112,14 +113,22 @@ const matchUpRechargeAndBold = (row, productId, variantId, qty, price) => {
   };
 };
 
-const processRowDate = async (rowData) => {
+const processRowDate = async (rowData, isCheckRechargeCustomer) => {
   const productTitles = rowData["Products"].split(",");
   const productIds = rowData["Product ID"].split(",");
   const variantIds = rowData["Variant ID"].split(",");
   const customerEmail = rowData["Customer E-mail"];
 
+  const active = rowData["Active"];
+  const isPaused = rowData["Is Paused"];
+
   const result = [];
 
+  if(active === "No" || isPaused === "1") {
+    return result;
+  }
+
+  // TODO: This should be an option
   if (rowData["Last Transaction Failure Date"]) {
     console.log(`${rowData["Last Transaction Failure Date"]}`);
     console.log(`Last Order Date: ${rowData["Last Order Date"]}`);
@@ -152,12 +161,14 @@ const processRowDate = async (rowData) => {
     }
   }
 
-  const rechargeCustomer = await getCustomerByEmail(customerEmail);
-  if (rechargeCustomer.customers.length) {
-    console.log("---------Customer Found--------");
-    console.log(`Next Order Date: ${rowData["Next Order Date"]}`);
-    console.log(customerEmail);
-    return result;
+  if (isCheckRechargeCustomer) {
+    const rechargeCustomer = await getCustomerByEmail(customerEmail);
+    if (rechargeCustomer.customers.length) {
+      console.log("---------Customer Found--------");
+      console.log(`Next Order Date: ${rowData["Next Order Date"]}`);
+      console.log(customerEmail);
+      return result;
+    }
   }
 
   for (let index = 0; index < productIds.length; index++) {
@@ -177,17 +188,17 @@ const processRowDate = async (rowData) => {
         }
       }
       const [productTitle] = productTitles.filter((title) =>
-        title.includes(product.title.replace("®", ""))
+        title.includes(product.title)
       );
 
       if (!productTitle) {
-        console.log(productTitles);
+        console.log(productTitle);
         console.log(product.title);
         console.log(customerEmail);
         console.log("No title");
       }
 
-      const [title, priceAndQty] = productTitle.split(" - ");
+      const [title, splitter, priceAndQty] = productTitle.split(/(\s-\s)(?!.*\1)/);
 
       // Figure out which one is the correct title to get the quantity.
       const [price, qty] = priceAndQty.split(" x ");
@@ -219,9 +230,10 @@ const processRowDate = async (rowData) => {
   return result;
 };
 
-const boldFile = "";
+const boldFile = "recurring_orders_all_customer_export_2021-03-29.csv";
+const isCheckRechargeCustomer = false;
 
-fs.readFile(`./bold-export/${boldFile}.csv`, async (err, data) => {
+fs.readFile(`./bold-export/${boldFile}`, async (err, data) => {
   if (err) {
     console.error(err);
     return;
@@ -234,22 +246,25 @@ fs.readFile(`./bold-export/${boldFile}.csv`, async (err, data) => {
 
   for (x; x < csvArr.length; x++) {
     const row = csvArr[x];
-    const results = await processRowDate(row);
+    const results = await processRowDate(row, isCheckRechargeCustomer);
     for (let i = 0; i < results.length; i++) {
       largeArray.push(results[i]);
     }
     console.log(`Row# ${x}`);
   }
 
-  const biggerArr = [
-    largeArray.slice(0, 500),
-    largeArray.slice(501, 1000),
-    largeArray.slice(1001, 1500),
-    largeArray.slice(1501),
-  ];
+  createCSV(largeArray, `./recharge-results/customers.csv`);
 
-  for (let x = 0; x < biggerArr.length; x++) {
-    const element = biggerArr[x];
-    createCSV(element, `./recharge-results/customers-${x}.csv`);
-  }
+  // TODO: Dynamically split large Array
+  // const biggerArr = [
+  //   largeArray.slice(0, 500),
+  //   largeArray.slice(501, 1000),
+  //   largeArray.slice(1001, 1500),
+  //   largeArray.slice(1501),
+  // ];
+
+  // for (let x = 0; x < biggerArr.length; x++) {
+  //   const element = biggerArr[x];
+  //   createCSV(element, `./recharge-results/customers-${x}.csv`);
+  // }
 });
