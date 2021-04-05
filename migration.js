@@ -258,7 +258,7 @@ const processRowDate = async (
   return result;
 };
 
-const boldFile = "recurring_orders_all_customer_export_2021-03-29.csv";
+const boldFile = "recurring_orders_all_customer_export_2021-04-05.csv";
 const isCheckRechargeCustomer = false;
 const paymentProcessor = "Stripe";
 
@@ -286,7 +286,7 @@ fs.readFile(`./bold-export/${boldFile}`, async (err, data) => {
     console.log(`Row# ${x}`);
   }
 
-  createCSV(largeArray, `./recharge-results/customers.csv`);
+  createCSV(largeArray, `./recharge-results/customers_2021-04-05.csv`);
 
   // TODO: Dynamically split large Array
   // const biggerArr = [
